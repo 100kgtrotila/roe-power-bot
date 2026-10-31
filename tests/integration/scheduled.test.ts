@@ -211,7 +211,7 @@ test("source outage is silent but due cached reminders warn, recovery does not r
   s.at(Date.UTC(2026, 9, 31, 15, 30));
   await s.tick();
   expect(s.messages).toHaveLength(2);
-  expect(s.messages[1]).toContain("Сайт недоступний");
+  expect(s.messages[1]).toContain("Не вдалося оновити графік");
   s.offline(false);
   s.at(Date.UTC(2026, 9, 31, 15, 40));
   await s.tick();
@@ -266,11 +266,11 @@ test("missing today is retained with original provenance without false whole-sit
     { missing: true, checkedAt: first?.checkedAt },
   );
   expect(s.messages.at(-1)).toContain("Дата відсутня");
-  expect(s.messages.at(-1)).not.toContain("Сайт недоступний");
+  expect(s.messages.at(-1)).not.toContain("Не вдалося оновити графік");
   s.at(Date.UTC(2026, 9, 31, 15, 30));
   await s.tick();
   expect(s.messages.at(-1)).toContain("Дата відсутня");
-  expect(s.messages.at(-1)).not.toContain("Сайт недоступний");
+  expect(s.messages.at(-1)).not.toContain("Не вдалося оновити графік");
   if (!snapshot) throw new Error("missing snapshot");
   const reminderTime = Date.UTC(2026, 9, 31, 21, 30);
   const view = getScheduleView(
@@ -293,7 +293,7 @@ test("missing today is retained with original provenance without false whole-sit
   s.at(reminderTime);
   await s.tick();
   expect(s.messages.at(-1)).toContain("До відключення 30 хвилин");
-  expect(s.messages.at(-1)).not.toContain("Сайт недоступний");
+  expect(s.messages.at(-1)).not.toContain("Не вдалося оновити графік");
 });
 
 test("midnight drops expired queued dates but publishes tomorrow immediately", async () => {
@@ -308,8 +308,8 @@ test("midnight drops expired queued dates but publishes tomorrow immediately", a
   s.at(Date.UTC(2026, 9, 31, 22));
   await s.tick();
   expect(s.messages).toHaveLength(1);
-  expect(s.messages[0]).toContain("2026-11-01");
-  expect(s.messages[0]).not.toContain("2026-10-31");
+  expect(s.messages[0]).toContain("1 листопада");
+  expect(s.messages[0]).not.toContain("31 жовтня");
 });
 
 test("lease expiration during send prevents confirmation and cleanup by stale owner", async () => {

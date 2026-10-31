@@ -35,14 +35,45 @@ const source = {
 it("renders full plain text graph with source warning and change marks", () => {
   const parts = renderSchedule(view, source, planChanges(null, view));
   const text = parts.join("\n");
-  expect(text).toContain("2026-11-01");
+  expect(text).toContain("1 листопада");
   expect(text).toContain("18:00–20:00");
   expect(text).toContain("змінено");
   expect(text).toContain("Перевірено:");
   expect(text).toContain("https://www.roe.vsei.ua/disconnections");
-  expect(text).toContain("Сайт недоступний, інформація може бути застарілою");
+  expect(text).toContain(
+    "Не вдалося оновити графік; показано останні збережені дані",
+  );
+  expect(text).not.toContain("Сайт недоступний");
   expect(QUEUE_IDS.every((q) => text.includes(`Підчерга ${q}`))).toBe(true);
   expect(parts.every((p) => p.length <= 4000)).toBe(true);
+});
+it("groups own intervals under one readable date and queue heading", () => {
+  const own = getScheduleView(
+    {
+      checkedAt: now,
+      days: [
+        {
+          date: "2026-11-01",
+          queues: queues({
+            status: "scheduled",
+            intervals: [
+              { startMinute: 480, endMinute: 600 },
+              { startMinute: 960, endMinute: 1080 },
+            ],
+          }),
+        },
+      ],
+    },
+    "1.2",
+    now,
+  );
+  const parts = renderSchedule(own, { ...source, unavailable: false });
+  expect(parts).toHaveLength(1);
+  const text = parts.join("\n");
+  expect(text).toContain("Сьогодні");
+  expect(text).toContain("1 листопада");
+  expect(text.match(/Підчерга 1\.2/g)).toHaveLength(1);
+  expect(text).toContain("08:00–10:00\n16:00–18:00");
 });
 it("late graph carries countdown and receipts suppress separate reminder", () => {
   const user = {
@@ -121,7 +152,9 @@ it("repeats retained-date warning and original check time on every multipart mes
   );
   const parts = renderSchedule(retained, { ...source, unavailable: false });
   expect(parts.length).toBeGreaterThan(1);
-  for (const part of parts.filter((p) => p.includes("2026-11-01\nПідчерга"))) {
+  const retainedParts = parts.filter((p) => p.includes("Підчерга"));
+  expect(retainedParts.length).toBeGreaterThan(1);
+  for (const part of retainedParts) {
     expect(part).toContain("Дата відсутня в останній відповіді джерела");
     expect(part).toContain("16:50");
     expect(part).not.toContain("Сайт недоступний");
