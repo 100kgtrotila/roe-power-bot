@@ -20,6 +20,21 @@ export interface DeliveryIntent extends DeliveryPayload {
   expiresAt: number;
 }
 export type QueuedDelivery = typeof deliveries.$inferSelect;
+/** Reflow is safe before sending; accepted parts must keep their exact boundaries. */
+export function canContinueDelivery(
+  row: Readonly<QueuedDelivery>,
+  payload: DeliveryPayload | null,
+): payload is DeliveryPayload {
+  return (
+    payload !== null &&
+    payload.parts.length > 0 &&
+    (row.partCursor === 0 ||
+      (payload.parts.length === row.payload.parts.length &&
+        payload.parts
+          .slice(0, row.partCursor)
+          .every((part, index) => part === row.payload.parts[index])))
+  );
+}
 /** Must inspect latest snapshot/source; null cancels obsolete content. Called before EVERY part.
  * Return updated stale-warning text with the same group size and confirmation metadata. */
 export type RevalidateDelivery = (
@@ -208,7 +223,7 @@ export async function deliverDue(
         }
         if (options.revalidate) {
           const payload = await options.revalidate(row, clock());
-          if (!payload || payload.parts.length !== row.payload.parts.length) {
+          if (!canContinueDelivery(row, payload)) {
             await cancel();
             break;
           }
@@ -238,6 +253,7 @@ export async function deliverDue(
         try {
           await Promise.race([
             api.sendMessage(row.telegramId, part, {
+              link_preview_options: { is_disabled: true },
               ...(row.partCursor === row.payload.parts.length - 1 &&
               row.payload.replyMarkup
                 ? { reply_markup: row.payload.replyMarkup }

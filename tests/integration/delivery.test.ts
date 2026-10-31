@@ -158,6 +158,45 @@ test("restart resumes cursor after timeout without premature baseline", async ()
   expect(sent).toEqual(["a", "b", "c"]);
   expect((await db.select().from(deliveries).get())?.status).toBe("sent");
 });
+
+test("changed multipart boundaries cannot skip intervals or confirm an incomplete delivery", async () => {
+  const db = await setup();
+  await enqueueDelivery(db, input());
+  const sent: string[] = [];
+  const api = fake(async (text) => {
+    sent.push(text);
+  });
+  await deliverDue(db, api, allowed, 100, { maxParts: 1 });
+  await deliverDue(db, api, allowed, 101, {
+    revalidate: async (row) => ({
+      ...row.payload,
+      parts: ["a plus b", "c", "d"],
+    }),
+  });
+  expect(sent).toEqual(["a"]);
+  expect(await loadNotificationState(db, "123")).toBeNull();
+  expect((await db.select().from(deliveries).get())?.status).toBe("cancelled");
+});
+
+test("an unsent intent can adopt new formatting with a different part count", async () => {
+  const db = await setup();
+  await enqueueDelivery(db, input());
+  const sent: string[] = [];
+  await deliverDue(
+    db,
+    fake(async (text) => {
+      sent.push(text);
+    }),
+    allowed,
+    100,
+    {
+      revalidate: async (row) => ({ ...row.payload, parts: ["a and b", "c"] }),
+    },
+  );
+  expect(sent).toEqual(["a and b", "c"]);
+  expect(await loadNotificationState(db, "123")).toEqual(intent.baselines);
+  expect((await db.select().from(deliveries).get())?.status).toBe("sent");
+});
 test("revision changed during group cancels remaining parts", async () => {
   const db = await setup();
   await enqueueDelivery(db, input());
@@ -362,7 +401,12 @@ test("direct messages retain inline buttons and multi-date baseline", async () =
     nodeFetch,
   );
   await deliverDue(db, new Api("test", { fetch: outbound }), allowed, 100);
-  expect(bodies).toEqual([expect.objectContaining({ reply_markup: markup })]);
+  expect(bodies).toEqual([
+    expect.objectContaining({
+      reply_markup: markup,
+      link_preview_options: { is_disabled: true },
+    }),
+  ]);
   expect(
     Object.keys((await loadNotificationState(db, "123")) ?? {}),
   ).toHaveLength(2);

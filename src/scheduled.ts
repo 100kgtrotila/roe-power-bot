@@ -8,6 +8,7 @@ import { deliveries, schedulerState, subscribers } from "./db/schema";
 import type { Env } from "./index";
 import { getScheduleView, planChanges } from "./notifications/changes";
 import {
+  canContinueDelivery,
   deliverDue,
   loadNotificationState,
   loadReminderReceipts,
@@ -144,11 +145,7 @@ export async function runScheduled(
                     ),
                 ),
               );
-            if (
-              !payload ||
-              payload.parts.length !== row.payload.parts.length ||
-              missingReminder
-            ) {
+            if (!canContinueDelivery(row, payload) || missingReminder) {
               await db.$client
                 .prepare(
                   `UPDATE deliveries SET status='cancelled' WHERE key=? AND status='pending' AND (claim_token IS NULL OR claim_expiry<=?) AND ${guard}`,
