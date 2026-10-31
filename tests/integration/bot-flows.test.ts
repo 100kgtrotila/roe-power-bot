@@ -62,7 +62,17 @@ function setup() {
           ? { id: -42, type: "group", title: "Group" }
           : { id: user, type: "private", first_name: "Test" },
         text,
-        entities: [{ type: "bot_command", offset: 0, length: text.length }],
+        ...(text.startsWith("/")
+          ? {
+              entities: [
+                {
+                  type: "bot_command" as const,
+                  offset: 0,
+                  length: text.length,
+                },
+              ],
+            }
+          : {}),
       },
     };
     await bot.handleUpdate(update);
@@ -112,6 +122,91 @@ test("private allowlisted onboarding is durable and duplicate updates are silent
     remindersEnabled: false,
     reminderMinutes: 15,
   });
+});
+
+test("start installs persistent six-button navigation and home restores it", async () => {
+  const s = setup();
+  await s.command("/start");
+  expect(s.calls.at(-1)?.body.reply_markup).toMatchObject({
+    keyboard: [
+      [{ text: "📅 Мій графік" }, { text: "📋 Усі черги" }],
+      [{ text: "🔢 Моя підчерга" }, { text: "🔔 Нагадування" }],
+      [{ text: "⚙️ Налаштування" }, { text: "🟢 Стан перевірок" }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  });
+  await s.command("🔢 Моя підчерга", 2);
+  expect(JSON.stringify(s.calls.at(-1)?.body.reply_markup)).toContain(
+    "42:select:1.2",
+  );
+  expect(JSON.stringify(s.calls.at(-1)?.body.reply_markup)).toContain(
+    "42:view:menu",
+  );
+  await s.callback("42:view:menu", 3);
+  expect(s.calls.at(-1)?.body.reply_markup).toHaveProperty("keyboard");
+});
+
+test("text buttons share access control, duplicate handling and selected setting markers", async () => {
+  const s = setup();
+  await s.command("🔢 Моя підчерга", 1, 99);
+  await s.command("🔢 Моя підчерга", 2, 42, true);
+  expect(s.calls).toHaveLength(0);
+  await s.command("/start", 3);
+  await s.callback("42:select:1.2", 4);
+  const user = await getSubscriber(s.db, "42");
+  await s.command("🔢 Моя підчерга", 5);
+  expect(JSON.stringify(s.calls.at(-1)?.body.reply_markup)).toContain("✓ 1.2");
+  const count = s.calls.length;
+  await s.command("🔢 Моя підчерга", 5);
+  expect(s.calls).toHaveLength(count);
+  await s.command("🔔 Нагадування", 6);
+  expect(JSON.stringify(s.calls.at(-1)?.body.reply_markup)).toContain(
+    "✓ 15 хв",
+  );
+  expect(await getSubscriber(s.db, "42")).toEqual(user);
+  await s.callback("42:interval:30", 7);
+  expect(String(s.calls.at(-1)?.body.text)).toContain(
+    "Збережено інтервал: 30 хв",
+  );
+  expect(JSON.stringify(s.calls.at(-1)?.body.reply_markup)).toContain(
+    "✓ 30 хв",
+  );
+});
+
+test("status distinguishes unprocessed data, successful parse, delayed check and failure without source requests", async () => {
+  const s = setup();
+  const { saveSourceState } = await import("../../src/db/schedule");
+  await s.command("🟢 Стан перевірок", 1);
+  expect(String(s.calls.at(-1)?.body.text)).toContain("Сайт ще не перевірено");
+  const source = {
+    lastAttemptAt: now,
+    lastSuccessAt: now,
+    nextAttemptAt: now + 300000,
+    failureCount: 0,
+    unavailable: false,
+  };
+  await saveSourceState(s.db, source);
+  await s.command("/status", 2);
+  expect(String(s.calls.at(-1)?.body.text)).toContain("Дані успішно зчитано");
+  expect(String(s.calls.at(-1)?.body.text)).toContain("12:00");
+  s.advance(600000);
+  await s.command("🟢 Стан перевірок", 3);
+  expect(String(s.calls.at(-1)?.body.text)).toContain("Перевірка затримується");
+  await saveSourceState(s.db, {
+    ...source,
+    unavailable: true,
+    failureCount: 1,
+  });
+  await s.command("🟢 Стан перевірок", 4);
+  expect(String(s.calls.at(-1)?.body.text)).toContain(
+    "Не вдалося зчитати сайт",
+  );
+  expect(
+    s.calls.every((c) =>
+      ["sendMessage", "answerCallbackQuery"].includes(c.method),
+    ),
+  ).toBe(true);
 });
 
 test("queue and reminders commands open their menus without changing subscription", async () => {
@@ -206,7 +301,9 @@ test("cached today/tomorrow display confirms own baseline; all preserves it and 
     unavailable: true,
   });
   await s.command("/schedule", 4);
-  expect(String(s.calls.at(-1)?.body.text)).toContain("Сайт недоступний");
+  expect(String(s.calls.at(-1)?.body.text)).toContain(
+    "Не вдалося оновити графік",
+  );
   expect(String(s.calls.at(-1)?.body.text)).toContain("Перевірено:");
   expect(
     s.calls.every((c) =>

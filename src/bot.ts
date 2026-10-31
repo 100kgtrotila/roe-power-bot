@@ -1,8 +1,13 @@
 import { Bot, type BotConfig, type Context } from "grammy";
 import { type BotAction, parseCallback } from "./bot/callbacks";
-import { HELP } from "./bot/commands";
-import { keyboard } from "./bot/keyboards";
+import { keyboard, MENU_ACTIONS } from "./bot/keyboards";
 import { revalidateDirectDelivery } from "./bot/revalidate";
+import {
+  actionConfirmation,
+  renderScreen,
+  renderSourceStatus,
+  withConfirmation,
+} from "./bot/screens";
 import type { AppDb } from "./db/client";
 import { claimLease, claimOperation, releaseLease } from "./db/operations";
 import { loadSnapshot, loadSourceState } from "./db/schedule";
@@ -101,13 +106,13 @@ export function createBot(
           user.reminderMinutes !== old.reminderMinutes);
       if (mutated && old) user.revision = old.revision + 1;
       const payload: DeliveryPayload = {
-        parts: [
-          page === "help"
-            ? HELP
-            : `Ваш вибір: ${user.selection ?? "ще не обрано"}.\nОновлення: ${user.updatesEnabled ? "увімкнені" : "вимкнені"}. Нагадування: ${user.remindersEnabled ? "увімкнені" : "вимкнені"}, за ${user.reminderMinutes} хв.`,
-        ],
+        parts: [renderScreen(user, page)],
         replyMarkup: keyboard(user, page),
       };
+      if (page === "status")
+        payload.parts = [
+          `${renderScreen(user, page)}\n\n${renderSourceStatus(await loadSourceState(db), now)}`,
+        ];
       if (graph) {
         const selection = page === "all" ? "all" : user.selection;
         if (!selection) {
@@ -147,6 +152,11 @@ export function createBot(
             }
           }
         }
+      }
+      const confirmation = actionConfirmation(action);
+      if (confirmation) {
+        payload.directConfirmation = confirmation;
+        payload.parts = withConfirmation(payload.parts, confirmation);
       }
       // All effects and durable reply intent commit in one local D1 transaction.
       const guard =
@@ -246,8 +256,14 @@ export function createBot(
     ["reminders", "reminders"],
     ["stop", "manage"],
     ["help", "help"],
+    ["status", "status"],
   ] as const) {
     privateChat.command(command, (ctx) =>
+      handle(ctx, { owner: String(ctx.from.id), kind: "view", view }),
+    );
+  }
+  for (const [text, view] of Object.entries(MENU_ACTIONS)) {
+    privateChat.hears(text, (ctx) =>
       handle(ctx, { owner: String(ctx.from.id), kind: "view", view }),
     );
   }

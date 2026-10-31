@@ -4,6 +4,7 @@ import { getScheduleView, sameView } from "../notifications/changes";
 import type { QueuedDelivery } from "../notifications/delivery";
 import { renderSchedule } from "../notifications/messages";
 import type { DeliveryPayload } from "../notifications/model";
+import { withConfirmation } from "./screens";
 /** Keep the original display semantics; only regenerate time and source-health text. */
 export async function revalidateDirectDelivery(
   db: AppDb,
@@ -33,6 +34,9 @@ export async function revalidateDirectDelivery(
     ...delivery.payload,
     directView: view,
     directReminders: reminders,
-    parts: renderSchedule(view, source, [], reminders, now),
+    parts: withConfirmation(
+      renderSchedule(view, source, [], reminders, now),
+      delivery.payload.directConfirmation,
+    ),
   };
 }

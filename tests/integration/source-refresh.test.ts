@@ -17,6 +17,64 @@ const good = () =>
   new Response(html, {
     headers: { "content-type": "text/html; charset=utf-8" },
   });
+
+test.each([
+  ["http", 403, async () => new Response(null, { status: 403 })],
+  [
+    "parse",
+    200,
+    async () =>
+      new Response("<html>changed layout</html>", {
+        headers: { "content-type": "text/html" },
+      }),
+  ],
+  [
+    "request",
+    null,
+    async () => {
+      throw new Error("secret credential in upstream exception");
+    },
+  ],
+] as const)(
+  "diagnostics distinguish %s failure without raw exception text",
+  async (stage, httpStatus, fetcher) => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const db = createDb(env.DB);
+      await refreshScheduleIfDue(db, 1000, fetcher);
+      expect(warning.mock.calls).toEqual([
+        [
+          "source_refresh_failed",
+          expect.objectContaining({ stage, httpStatus, failureCount: 1 }),
+        ],
+      ]);
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(
+        "secret credential",
+      );
+      expect((await loadSourceState(db)).unavailable).toBe(true);
+    } finally {
+      warning.mockRestore();
+    }
+  },
+);
+
+test("successful refresh logs confirmed processing and a skipped poll does not log a fake success", async () => {
+  const info = vi.spyOn(console, "info").mockImplementation(() => {});
+  try {
+    const db = createDb(env.DB);
+    await refreshScheduleIfDue(db, 1000, async () => good());
+    await refreshScheduleIfDue(db, 1001, async () => good());
+    expect(info.mock.calls).toEqual([
+      [
+        "source_refresh_succeeded",
+        expect.objectContaining({ publishedDates: 1, retainedDates: 0 }),
+      ],
+    ]);
+    expect((await loadSourceState(db)).lastSuccessAt).not.toBeNull();
+  } finally {
+    info.mockRestore();
+  }
+});
 test("20 subscribers and concurrent refresh share one fetch and persist cadence", async () => {
   const db = createDb(env.DB);
   for (let i = 0; i < 20; i++)

@@ -1,15 +1,17 @@
 import { isQueueId, type Selection } from "../schedule/model";
+export type BotView =
+  | "schedule"
+  | "all"
+  | "select"
+  | "reminders"
+  | "manage"
+  | "help"
+  | "menu"
+  | "status";
 export type BotAction = { owner: string } & (
   | {
       kind: "view";
-      view:
-        | "schedule"
-        | "all"
-        | "select"
-        | "reminders"
-        | "manage"
-        | "help"
-        | "menu";
+      view: BotView;
     }
   | { kind: "select"; selection: Selection }
   | { kind: "interval"; minutes: 15 | 30 | 60 }
@@ -27,7 +29,8 @@ export function parseCallback(data: string): BotAction | null {
       value === "reminders" ||
       value === "manage" ||
       value === "help" ||
-      value === "menu")
+      value === "menu" ||
+      value === "status")
   )
     return { owner, kind, view: value };
   if (kind === "select" && value && (value === "all" || isQueueId(value)))

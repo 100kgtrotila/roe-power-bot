@@ -84,6 +84,8 @@ export async function refreshScheduleIfDue(
   const started = performance.now();
   const currentTime = () => now + Math.floor(performance.now() - started);
   let retryDelay = 0;
+  let stage: "request" | "http" | "body" | "parse" | "persist" = "request";
+  let httpStatus: number | null = null;
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -103,6 +105,8 @@ export async function refreshScheduleIfDue(
             signal: controller.signal,
             headers: { Accept: "text/html" },
           });
+          httpStatus = response.status;
+          stage = "http";
           if (!response.ok) {
             if (response.status === 429 || response.status === 503)
               retryDelay = retryAfterDelay(
@@ -112,13 +116,14 @@ export async function refreshScheduleIfDue(
             await response.body?.cancel();
             throw new Error("Source HTTP failure");
           }
-          return parseSchedule(
-            await readHtml(response, controller.signal),
-            currentTime(),
-          );
+          stage = "body";
+          const html = await readHtml(response, controller.signal);
+          stage = "parse";
+          return parseSchedule(html, currentTime());
         })(),
         timedOut,
       ]);
+      stage = "persist";
       const completedAt = currentTime();
       const cached = await loadSnapshot(db);
       const { today, tomorrow } = getKyivDates(completedAt);
@@ -134,7 +139,7 @@ export async function refreshScheduleIfDue(
           missing: true,
         })),
       );
-      await saveRefreshResult(
+      const saved = await saveRefreshResult(
         db,
         token,
         completedAt,
@@ -147,6 +152,12 @@ export async function refreshScheduleIfDue(
         },
         snapshot,
       );
+      if (saved)
+        console.info("source_refresh_succeeded", {
+          checkedAt: completedAt,
+          publishedDates: snapshot.days.length - retained.length,
+          retainedDates: retained.length,
+        });
     } catch {
       const completedAt = currentTime();
       const failureCount = Math.min(previous.failureCount + 1, 1000);
@@ -154,13 +165,21 @@ export async function refreshScheduleIfDue(
         Math.min(INTERVAL_MS * 2 ** Math.min(failureCount - 1, 5), 3600000),
         retryDelay,
       );
-      await saveRefreshResult(db, token, completedAt, {
+      const saved = await saveRefreshResult(db, token, completedAt, {
         ...previous,
         lastAttemptAt: now,
         nextAttemptAt: completedAt + delay,
         failureCount,
         unavailable: true,
       });
+      // Log only controlled fields: upstream exceptions may contain request details.
+      if (saved)
+        console.warn("source_refresh_failed", {
+          stage: controller.signal.aborted ? "timeout" : stage,
+          httpStatus,
+          failureCount,
+          nextAttemptAt: completedAt + delay,
+        });
     }
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
