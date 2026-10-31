@@ -1,0 +1,4 @@
+# Скопіюйте в .dev.vars. Реальні значення ніколи не додавайте до Git.
+BOT_TOKEN=
+WEBHOOK_SECRET=
+ALLOWED_TELEGRAM_IDS=
