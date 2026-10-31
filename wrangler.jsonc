@@ -4,13 +4,17 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-30",
   "workers_dev": true,
-  "triggers": { "crons": ["* * * * *"] },
-  "vars": { "ALLOWED_TELEGRAM_IDS": "" },
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "vars": {
+    "ALLOWED_TELEGRAM_IDS": "749797149"
+  },
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "roe-power-bot-local",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_name": "roe-power-bot",
+      "database_id": "2776bc7d-8d6f-48e5-9d34-e2f46ff90d04",
       "migrations_dir": "migrations"
     }
   ]
