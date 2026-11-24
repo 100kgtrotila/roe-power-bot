@@ -10,7 +10,38 @@ const synthetic = readFileSync(
   "tests/fixtures/disconnections/synthetic-two-days.html",
   "utf8",
 );
+const published = readFileSync(
+  "tests/fixtures/disconnections/observed-2026-11-24.html",
+  "utf8",
+);
 describe("parseSchedule", () => {
+  it("reads published hours and blank cells from the live table format", () => {
+    const { days } = parseSchedule(published, 123);
+    expect(days.map((day) => day.date)).toEqual(["2026-11-24", "2026-11-25"]);
+    expect(days[0]?.queues["1.2"]).toEqual({
+      status: "scheduled",
+      intervals: [{ startMinute: 1200, endMinute: 1320 }],
+    });
+    expect(days[0]?.queues["3.1"]).toEqual({ status: "none" });
+    expect(days[1]?.queues["1.2"]).toEqual({ status: "none" });
+    expect(days[1]?.queues["6.2"]).toEqual({
+      status: "scheduled",
+      intervals: [{ startMinute: 1320, endMinute: 1439 }],
+    });
+  });
+  it("reads separate paragraphs as separate intervals", () => {
+    const html = published.replace(
+      "20:00 - 22:00</p>",
+      '09:00 - 11:00</p><p style="white-space:nowrap">20:00 - 22:00</p>',
+    );
+    expect(parseSchedule(html, 123).days[0]?.queues["1.1"]).toEqual({
+      status: "scheduled",
+      intervals: [
+        { startMinute: 540, endMinute: 660 },
+        { startMinute: 1200, endMinute: 1320 },
+      ],
+    });
+  });
   it("rejects a date row preceding the queue header", () => {
     const misplaced = synthetic.replace(
       /(<tr><td>Підчерга<\/td>.*?<\/tr>)(<tr><td>31\.10\.2026<\/td>.*?<\/tr>)/,
@@ -60,6 +91,7 @@ describe("parseSchedule", () => {
     real.replace("31.10.2026", "31.02.2026"),
     real.replace("Очікується", "Відключень немає"),
     real.replace("Очікується", ""),
+    real.replaceAll("Очікується", ""),
     real.replace("1.2</td>", "1.1</td>"),
     synthetic.replace("08:00", "24:00"),
     synthetic.replace("10:00", "07:00"),

@@ -19,15 +19,14 @@ function fail(message: string): never {
   throw new ScheduleParseError(message);
 }
 function parseCell(text: string): QueueSchedule {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (normalized === "Очікується") return { status: "pending" };
+  if (text === "") return { status: "none" };
+  if (text === "Очікується") return { status: "pending" };
   const intervals: OutageInterval[] = [];
-  // No explicit none marker has been observed; all unknown/empty text fails closed.
   const expression = /(\d{2}):(\d{2})\s*[-–—]\s*(\d{2}):(\d{2})/g;
   const completeIntervals =
     /^(?:\d{2}:\d{2}\s*[-–—]\s*\d{2}:\d{2})(?:\s+\d{2}:\d{2}\s*[-–—]\s*\d{2}:\d{2})*$/;
-  if (!completeIntervals.test(normalized)) fail("Unknown schedule cell");
-  for (const match of normalized.matchAll(expression)) {
+  if (!completeIntervals.test(text)) fail("Unknown schedule cell");
+  for (const match of text.matchAll(expression)) {
     const startHour = Number(match[1]);
     const startMinutes = Number(match[2]);
     const endHour = Number(match[3]);
@@ -87,7 +86,16 @@ export function parseSchedule(
         node.type === "tag" && (node.name === "td" || node.name === "th"),
     );
     const texts = cells.map((cell) =>
-      DomUtils.getText(cell).replace(/\s+/g, " ").trim(),
+      DomUtils.getChildren(cell)
+        .map((child) => {
+          const text = DomUtils.getText(child);
+          return child.type === "tag" && child.name === "p"
+            ? ` ${text} `
+            : text;
+        })
+        .join("")
+        .replace(/\s+/g, " ")
+        .trim(),
     );
     if (
       (headers || texts[0] === "Підчерга") &&
@@ -133,7 +141,14 @@ export function parseSchedule(
       fail("Invalid or duplicate date");
     const queues: Partial<Record<QueueId, QueueSchedule>> = {};
     for (const [index, queue] of headers.entries())
-      queues[queue] = parseCell(texts[index + 1] ?? "");
+      queues[queue] = parseCell(texts[index + 1] ?? fail("Missing queue cell"));
+    const schedules = Object.values(queues);
+    // Blank cells have been observed alongside published hours in the same row.
+    if (
+      schedules.some((schedule) => schedule.status === "none") &&
+      !schedules.some((schedule) => schedule.status === "scheduled")
+    )
+      fail("Blank cells without published hours");
     // Explicit construction keeps the complete Record contract checked without a cast.
     function required(queue: QueueId): QueueSchedule {
       return queues[queue] ?? fail("Missing queue");

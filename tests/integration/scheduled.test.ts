@@ -20,6 +20,7 @@ const initial = Date.UTC(2026, 9, 31, 10);
 function setup() {
   let now = initial;
   let cell = "Очікується";
+  let otherCells = cell;
   let date = "31.10.2026";
   let allowed = "42";
   let offline = false;
@@ -52,14 +53,15 @@ function setup() {
     fetches++;
     if (offline) return new Response(null, { status: 503 });
     return new Response(
-      `<div id="fetched-data-container"><table><tr><td>Підчерга</td>${Array.from({ length: 12 }, (_, i) => `<td>${Math.floor(i / 2) + 1}.${(i % 2) + 1}</td>`).join("")}</tr><tr><td>${date}</td>${`<td>${cell}</td>`.repeat(12)}</tr></table></div>`,
+      `<div id="fetched-data-container"><table><tr><td>Підчерга</td>${Array.from({ length: 12 }, (_, i) => `<td>${Math.floor(i / 2) + 1}.${(i % 2) + 1}</td>`).join("")}</tr><tr><td>${date}</td><td>${cell}</td>${`<td>${otherCells}</td>`.repeat(11)}</tr></table></div>`,
       { headers: { "content-type": "text/html" } },
     );
   };
   return {
     messages,
-    set: (value: string) => {
+    set: (value: string, other = value) => {
       cell = value;
+      otherCells = other;
     },
     fetches: () => fetches,
     day: (value: string) => {
@@ -122,8 +124,8 @@ test("waiting, hours, unchanged, changed, clarification, restored hours, none su
     s.set(value);
     await s.tick();
   }
-  // No none marker has been verified on the live site. Exercise domain none
-  // from persisted state rather than teaching the parser an invented spelling.
+  // Exercise a full day without outages from persisted state. The source
+  // format for an entirely empty row has not been confirmed.
   const db = createDb(env.DB);
   const snapshot = await loadSnapshot(db);
   if (!snapshot) throw new Error("missing snapshot");
@@ -147,6 +149,20 @@ test("concurrent cron claims share one fetch and one graph", async () => {
   await Promise.all([s.tick(0), s.tick(0)]);
   expect(s.fetches()).toBe(1);
   expect(s.messages).toHaveLength(1);
+});
+
+test("cron sends published hours once when other queues have blank cells", async () => {
+  await subscriber();
+  const s = setup();
+  await s.tick();
+  expect(s.messages).toHaveLength(0);
+
+  s.set("<p>18:00 - 20:00</p>", "");
+  await s.tick();
+  await s.tick();
+
+  expect(s.messages).toHaveLength(1);
+  expect(s.messages[0]).toContain("18:00–20:00");
 });
 
 test("failed delivery is cancelled after user stops and revision changes", async () => {
