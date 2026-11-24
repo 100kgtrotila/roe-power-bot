@@ -24,7 +24,7 @@ test.each([
     "parse",
     200,
     async () =>
-      new Response("<html>changed layout</html>", {
+      new Response("<html>secret credential in raw HTML</html>", {
         headers: { "content-type": "text/html" },
       }),
   ],
@@ -45,12 +45,21 @@ test.each([
       expect(warning.mock.calls).toEqual([
         [
           "source_refresh_failed",
-          expect.objectContaining({ stage, httpStatus, failureCount: 1 }),
+          expect.objectContaining({
+            stage,
+            httpStatus,
+            failureCount: 1,
+            ...(stage === "parse"
+              ? { parseReason: "Missing or duplicate schedule container" }
+              : {}),
+          }),
         ],
       ]);
       expect(JSON.stringify(warning.mock.calls)).not.toContain(
         "secret credential",
       );
+      if (stage !== "parse")
+        expect(warning.mock.calls[0]?.[1]).not.toHaveProperty("parseReason");
       expect((await loadSourceState(db)).unavailable).toBe(true);
     } finally {
       warning.mockRestore();

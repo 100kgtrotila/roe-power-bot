@@ -54,6 +54,18 @@ function parseCell(text: string): QueueSchedule {
   }
   return { status: "scheduled", intervals };
 }
+
+function queueHeaders(texts: string[]): QueueId[] | undefined {
+  if (texts[0] !== "Підчерга") return;
+  const labels = texts.slice(1);
+  if (
+    labels.length === QUEUE_IDS.length &&
+    labels.every(isQueueId) &&
+    new Set(labels).size === QUEUE_IDS.length
+  )
+    return labels;
+}
+
 export function parseSchedule(
   html: string,
   checkedAt: number,
@@ -71,32 +83,41 @@ export function parseSchedule(
     (element) => element.name === "table",
     container.children,
   );
-  if (tables.length !== 1) fail("Missing or duplicate schedule table");
-  const table = tables[0];
-  if (!table) fail("Missing schedule table");
-  const rows = DomUtils.findAll(
-    (element) => element.name === "tr",
-    table.children,
-  );
+  const scheduleTables = tables
+    .map((table) =>
+      DomUtils.findAll(
+        (element) =>
+          element.name === "tr" &&
+          (element.parent === table || element.parent?.parent === table),
+        table.children,
+      ).map((row) => {
+        const cells = row.children.filter(
+          (node) =>
+            node.type === "tag" && (node.name === "td" || node.name === "th"),
+        );
+        const texts = cells.map((cell) =>
+          DomUtils.getChildren(cell)
+            .map((child) => {
+              const text = DomUtils.getText(child);
+              return child.type === "tag" && child.name === "p"
+                ? ` ${text} `
+                : text;
+            })
+            .join("")
+            .replace(/\s+/g, " ")
+            .trim(),
+        );
+        return { cells, texts };
+      }),
+    )
+    .filter((rows) => rows.some(({ texts }) => queueHeaders(texts)));
+  if (scheduleTables.length > 1) fail("Duplicate schedule tables");
+  const rows = scheduleTables[0];
+  if (!rows) fail("Missing schedule table with valid queue headers");
+
   let headers: QueueId[] | undefined;
   const days: DaySchedule[] = [];
-  for (const row of rows) {
-    const cells = row.children.filter(
-      (node) =>
-        node.type === "tag" && (node.name === "td" || node.name === "th"),
-    );
-    const texts = cells.map((cell) =>
-      DomUtils.getChildren(cell)
-        .map((child) => {
-          const text = DomUtils.getText(child);
-          return child.type === "tag" && child.name === "p"
-            ? ` ${text} `
-            : text;
-        })
-        .join("")
-        .replace(/\s+/g, " ")
-        .trim(),
-    );
+  for (const { cells, texts } of rows) {
     if (
       (headers || texts[0] === "Підчерга") &&
       cells.some(
@@ -109,32 +130,15 @@ export function parseSchedule(
       fail("Merged schedule cells");
     if (texts[0] === "Підчерга") {
       if (headers || days.length) fail("Duplicate or misplaced queue header");
-      const labels = texts.slice(1);
-      if (
-        labels.length !== 12 ||
-        !labels.every(isQueueId) ||
-        new Set(labels).size !== 12
-      )
-        fail("Invalid queue headers");
-      headers = labels;
+      headers = queueHeaders(texts) ?? fail("Invalid queue headers");
       continue;
     }
-    if (!headers) {
-      const isTitle =
-        texts.length === 1 && texts[0] === "Графік погодинних відключень (ГПВ)";
-      const isHoursHeading =
-        texts.length === 13 &&
-        texts[0] === "" &&
-        texts.slice(1).every((text) => text === "Години відключення");
-      const isQueueGroups =
-        texts.length === 6 &&
-        texts.every((text, index) => text === `Черга № ${index + 1}`);
-      if (!isTitle && !isHoursHeading && !isQueueGroups)
-        fail("Unexpected row before queue header");
-      continue;
-    }
-    if (cells.length !== 13) fail("Incomplete date row");
     const match = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(texts[0] ?? "");
+    if (!headers) {
+      if (match) fail("Date row before queue header");
+      continue;
+    }
+    if (cells.length !== headers.length + 1) fail("Incomplete date row");
     if (!match) fail("Invalid source date");
     const date = `${match[3]}-${match[2]}-${match[1]}`;
     if (!isValidDate(date) || days.some((day) => day.date === date))
@@ -169,8 +173,7 @@ export function parseSchedule(
     };
     days.push({ date, queues: complete });
   }
-  if (!headers || !days.length || headers.length !== QUEUE_IDS.length)
-    fail("Missing schedule data");
+  if (!days.length) fail("Missing schedule data");
   days.sort((a, b) => a.date.localeCompare(b.date));
   return { days, checkedAt };
 }

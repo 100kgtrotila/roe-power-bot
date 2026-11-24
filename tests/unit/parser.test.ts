@@ -18,6 +18,12 @@ describe("parseSchedule", () => {
   it("reads published hours and blank cells from the live table format", () => {
     const { days } = parseSchedule(published, 123);
     expect(days.map((day) => day.date)).toEqual(["2026-11-24", "2026-11-25"]);
+    for (const { queues } of days) {
+      expect(Object.keys(queues)).toHaveLength(12);
+      expect(
+        Object.values(queues).filter(({ status }) => status === "scheduled"),
+      ).toHaveLength(10);
+    }
     expect(days[0]?.queues["1.2"]).toEqual({
       status: "scheduled",
       intervals: [{ startMinute: 1200, endMinute: 1320 }],
@@ -28,6 +34,28 @@ describe("parseSchedule", () => {
       status: "scheduled",
       intervals: [{ startMinute: 1320, endMinute: 1439 }],
     });
+  });
+  it("reads the observed table when decorative headings change", () => {
+    const html = published
+      .replace("Графік погодинних відключень (ГПВ)", "Графік на сьогодні")
+      .replaceAll("Години відключення", "Години обмеження")
+      .replaceAll("Черга <strong>", "Група <strong>");
+    expect(parseSchedule(html, 123)).toEqual(parseSchedule(published, 123));
+  });
+  it("selects the 12-subqueue table beside an unrelated table", () => {
+    const html = published.replace(
+      "<table",
+      "<table><tr><td>Підчерга</td><td>1.1</td></tr></table><table",
+    );
+    expect(parseSchedule(html, 123)).toEqual(parseSchedule(published, 123));
+  });
+  it("rejects two tables with complete subqueue headers", () => {
+    const table = published.slice(
+      published.indexOf("<table"),
+      published.indexOf("</div>"),
+    );
+    const html = published.replace("</div>", `${table}</div>`);
+    expect(() => parseSchedule(html, 123)).toThrow("Duplicate schedule tables");
   });
   it("reads separate paragraphs as separate intervals", () => {
     const html = published.replace(

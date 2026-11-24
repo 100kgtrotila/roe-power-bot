@@ -5,7 +5,7 @@ import {
   loadSourceState,
   saveRefreshResult,
 } from "../db/schedule";
-import { parseSchedule } from "./parser";
+import { parseSchedule, ScheduleParseError } from "./parser";
 import { getKyivDates } from "./time";
 
 export const SOURCE_URL = "https://www.roe.vsei.ua/disconnections";
@@ -84,7 +84,8 @@ export async function refreshScheduleIfDue(
   const started = performance.now();
   const currentTime = () => now + Math.floor(performance.now() - started);
   let retryDelay = 0;
-  let stage: "request" | "http" | "body" | "parse" | "persist" = "request";
+  const progress: { stage: "request" | "http" | "body" | "parse" | "persist" } =
+    { stage: "request" };
   let httpStatus: number | null = null;
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -106,7 +107,7 @@ export async function refreshScheduleIfDue(
             headers: { Accept: "text/html" },
           });
           httpStatus = response.status;
-          stage = "http";
+          progress.stage = "http";
           if (!response.ok) {
             if (response.status === 429 || response.status === 503)
               retryDelay = retryAfterDelay(
@@ -116,14 +117,14 @@ export async function refreshScheduleIfDue(
             await response.body?.cancel();
             throw new Error("Source HTTP failure");
           }
-          stage = "body";
+          progress.stage = "body";
           const html = await readHtml(response, controller.signal);
-          stage = "parse";
+          progress.stage = "parse";
           return parseSchedule(html, currentTime());
         })(),
         timedOut,
       ]);
-      stage = "persist";
+      progress.stage = "persist";
       const completedAt = currentTime();
       const cached = await loadSnapshot(db);
       const { today, tomorrow } = getKyivDates(completedAt);
@@ -158,7 +159,7 @@ export async function refreshScheduleIfDue(
           publishedDates: snapshot.days.length - retained.length,
           retainedDates: retained.length,
         });
-    } catch {
+    } catch (error) {
       const completedAt = currentTime();
       const failureCount = Math.min(previous.failureCount + 1, 1000);
       const delay = Math.max(
@@ -172,11 +173,14 @@ export async function refreshScheduleIfDue(
         failureCount,
         unavailable: true,
       });
-      // Log only controlled fields: upstream exceptions may contain request details.
+      // ScheduleParseError messages are fixed parser strings, never upstream text.
       if (saved)
         console.warn("source_refresh_failed", {
-          stage: controller.signal.aborted ? "timeout" : stage,
+          stage: controller.signal.aborted ? "timeout" : progress.stage,
           httpStatus,
+          ...(progress.stage === "parse" && error instanceof ScheduleParseError
+            ? { parseReason: error.message }
+            : {}),
           failureCount,
           nextAttemptAt: completedAt + delay,
         });
